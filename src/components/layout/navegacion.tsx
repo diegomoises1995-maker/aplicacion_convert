@@ -2,18 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, House, Settings, ShieldCheck, UserRound, Users, type LucideIcon } from "lucide-react";
-import type { IconoNav, ItemNav } from "@/lib/navegacion";
+import { ICONOS } from "@/components/layout/iconos";
+import type { ItemNav } from "@/lib/navegacion";
 import { cn } from "@/lib/utils";
 
-const ICONOS: Record<IconoNav, LucideIcon> = {
-  inicio: House,
-  equipo: Users,
-  auditoria: ShieldCheck,
-  perfil: UserRound,
-  clientes: Building2,
-  configuracion: Settings,
-};
+
 
 function activo(pathname: string, href: string) {
   return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/");
@@ -22,7 +15,7 @@ function activo(pathname: string, href: string) {
 export function NavLateral({ items }: { items: ItemNav[] }) {
   const pathname = usePathname();
   return (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex flex-col gap-1 overflow-y-auto">
       {items.map((item) => {
         const Icono = ICONOS[item.icono];
         const esActivo = activo(pathname, item.href);
@@ -45,18 +38,18 @@ export function NavLateral({ items }: { items: ItemNav[] }) {
   );
 }
 
-export function NavInferior({ items }: { items: ItemNav[] }) {
+export function NavInferior({ items, mas }: { items: ItemNav[]; mas: ItemNav[] }) {
   const pathname = usePathname();
-  const moviles = items.filter((i) => i.movil).slice(0, 5);
+  const enMas = mas.some((i) => activo(pathname, i.href));
   return (
     <nav
       className="fixed inset-x-0 bottom-0 z-30 border-t border-borde bg-superficie/95 backdrop-blur md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid" style={{ gridTemplateColumns: `repeat(${moviles.length}, minmax(0, 1fr))` }}>
-        {moviles.map((item) => {
+      <ul className="grid" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
+        {items.map((item) => {
           const Icono = ICONOS[item.icono];
-          const esActivo = activo(pathname, item.href);
+          const esActivo = item.href === "/mas" ? enMas || pathname === "/mas" : activo(pathname, item.href);
           return (
             <li key={item.href}>
               <Link

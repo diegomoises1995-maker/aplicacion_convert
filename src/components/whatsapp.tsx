@@ -5,12 +5,3 @@ export function IconoWhatsApp({ className }: { className?: string }) {
     </svg>
   );
 }
-
-/** Reemplaza {cliente}, {contacto}, {vendedor}, {empresa} en una plantilla. */
-export function aplicarPlantilla(mensaje: string, vars: Record<string, string | null | undefined>) {
-  return mensaje.replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m).replace(/\{\w+\}/g, "").trim();
-}
-
-export function enlaceWhatsApp(numero: string, mensaje?: string) {
-  return `https://wa.me/${numero}${mensaje ? `?text=${encodeURIComponent(mensaje)}` : ""}`;
-}

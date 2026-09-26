@@ -54,6 +54,7 @@ async function main() {
   });
 
   await seedClientes();
+  await seedPipeline();
 
   const plantillas = [
     {
@@ -136,6 +137,66 @@ async function seedClientes() {
     });
     await db.clienteAsignacionHistorial.create({
       data: { clienteId: cliente.id, haciaVendedorId: vendedorId, asignadoPorId: admin.id, motivo: "Carga inicial" },
+    });
+  }
+}
+
+// PRNG determinista para que el seed genere siempre los mismos datos.
+let semilla = 20260926;
+function azar() {
+  semilla = (semilla * 1664525 + 1013904223) % 4294967296;
+  return semilla / 4294967296;
+}
+const entre = (min: number, max: number) => Math.floor(azar() * (max - min + 1)) + min;
+const elegir = <T,>(xs: readonly T[]) => xs[Math.floor(azar() * xs.length)]!;
+const DIA = 86_400_000;
+
+// ─────────────────────────── Pipeline y actividades ───────────────────────────
+async function seedPipeline() {
+  if ((await db.oportunidad.count()) > 0) return;
+  const clientes = await db.cliente.findMany({ where: { vendedorId: { not: null } } });
+  const etapas = ["PROSPECTO", "CONTACTADO", "COTIZACION_ENVIADA", "NEGOCIACION", "GANADO", "PERDIDO"] as const;
+  const titulos = ["Campaña escolar", "Reposición de temporada", "Nuevos modelos urbanos", "Pedido de fiestas", "Línea casual", "Apertura de tienda"];
+  const motivos = ["Precio", "Eligió a la competencia", "Sin stock / tallas", "Cliente no respondió"];
+  const ahora = Date.now();
+
+  for (let i = 0; i < 24; i++) {
+    const c = clientes[i % clientes.length]!;
+    const etapa = etapas[i % etapas.length]!;
+    const cerrada = etapa === "GANADO" || etapa === "PERDIDO";
+    await db.oportunidad.create({
+      data: {
+        titulo: `${elegir(titulos)} – ${c.nombreComercial}`,
+        etapa,
+        valorEstimado: entre(8, 60) * 250,
+        paresEstimados: entre(2, 20) * 12,
+        fechaCierreProbable: new Date(ahora + entre(-10, 45) * DIA),
+        fechaCierreReal: cerrada ? new Date(ahora - entre(1, 40) * DIA) : null,
+        motivoPerdida: etapa === "PERDIDO" ? elegir(motivos) : null,
+        clienteId: c.id,
+        vendedorId: c.vendedorId!,
+      },
+    });
+  }
+
+  const tipos = ["LLAMADA", "WHATSAPP", "VISITA", "REUNION"] as const;
+  const asuntos = ["Presentar catálogo de temporada", "Seguimiento de cotización", "Confirmar pago", "Coordinar despacho", "Consultar rotación de tallas", "Ofrecer reposición"];
+  for (let i = 0; i < 60; i++) {
+    const c = elegir(clientes);
+    const dias = entre(-20, 7);
+    const fecha = new Date(ahora + dias * DIA + entre(-4, 4) * 3_600_000);
+    const completada = dias < -1 ? azar() < 0.85 : dias < 0 ? azar() < 0.5 : false;
+    await db.actividad.create({
+      data: {
+        tipo: elegir(tipos),
+        asunto: elegir(asuntos),
+        clienteId: c.id,
+        vendedorId: c.vendedorId!,
+        fechaProgramada: fecha,
+        completada,
+        fechaRealizada: completada ? fecha : null,
+        resultado: completada ? elegir(["EXITOSA", "EXITOSA", "SIN_RESPUESTA", "REPROGRAMADA"] as const) : "PENDIENTE",
+      },
     });
   }
 }

@@ -1,0 +1,40 @@
+@import "tailwindcss";
+
+/* Paleta Convert: neutros cálidos + color de marca tipo cuero */
+@theme {
+  --color-marca-50: #fbf6f1;
+  --color-marca-100: #f3e6d8;
+  --color-marca-200: #e6cbb0;
+  --color-marca-500: #a8662f;
+  --color-marca-600: #8f5324;
+  --color-marca-700: #74421d;
+  --color-marca-900: #3d2310;
+
+  --color-fondo: #f7f6f4;
+  --color-superficie: #ffffff;
+  --color-borde: #e5e2dd;
+  --color-texto: #1c1917;
+  --color-texto-suave: #6b645c;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font-family: var(--font-sans);
+}
+
+/* Evita que el contenido quede bajo la barra inferior en móviles con notch */
+.pb-safe {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 4.5rem);
+}
+@media (min-width: 768px) {
+  .pb-safe {
+    padding-bottom: 2rem;
+  }
+}

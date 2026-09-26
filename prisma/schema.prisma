@@ -1,0 +1,706 @@
+// Esquema de datos de Convert Ventas.
+// Convenciones: montos en soles (PEN) como Decimal(12,2) y SIN IGV;
+// el IGV (18 %) se calcula y guarda por separado en cotizaciones y pedidos.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────── Usuarios y equipo ───────────────────────────────
+
+enum Rol {
+  ADMIN
+  SUPERVISOR
+  VENDEDOR
+}
+
+enum CanalVenta {
+  CAMPO
+  REMOTO // WhatsApp / teléfono
+  MIXTO
+}
+
+model Zona {
+  id          String    @id @default(cuid())
+  nombre      String    @unique
+  descripcion String?
+  activa      Boolean   @default(true)
+  usuarios    User[]
+  clientes    Cliente[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  nombre       String
+  telefono     String?
+  dni          String?    @unique
+  rol          Rol        @default(VENDEDOR)
+  canal        CanalVenta @default(MIXTO)
+  activo       Boolean    @default(true)
+  fechaIngreso DateTime?
+  ultimoAcceso DateTime?
+
+  zonaId String?
+  zona   Zona?   @relation(fields: [zonaId], references: [id])
+
+  // Jerarquía: un vendedor tiene un supervisor; un supervisor tiene un equipo.
+  supervisorId String?
+  supervisor   User?   @relation("Equipo", fields: [supervisorId], references: [id])
+  vendedores   User[]  @relation("Equipo")
+
+  clientes              Cliente[]                    @relation("ClienteVendedor")
+  asignacionesDesde     ClienteAsignacionHistorial[] @relation("AsignacionDesde")
+  asignacionesHacia     ClienteAsignacionHistorial[] @relation("AsignacionHacia")
+  asignacionesHechas    ClienteAsignacionHistorial[] @relation("AsignacionPor")
+  oportunidades         Oportunidad[]
+  actividades           Actividad[]
+  cotizaciones          Cotizacion[]
+  pedidos               Pedido[]
+  metas                 Meta[]
+  liquidaciones         LiquidacionComision[]
+  aprobacionesPedidas   AprobacionDescuento[]        @relation("AprobacionSolicitante")
+  aprobacionesResueltas AprobacionDescuento[]        @relation("AprobacionAprobador")
+  cambiosEstadoPedido   PedidoEstadoHistorial[]
+  pagosVerificados      Pago[]
+  auditoria             AuditLog[]
+  alertas               AlertaRecompra[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([rol, activo])
+  @@index([supervisorId])
+}
+
+// Parámetros de negocio editables por el administrador (una sola fila, id = 1).
+model Configuracion {
+  id                     Int      @id @default(1)
+  igvPorcentaje          Decimal  @default(18) @db.Decimal(5, 2)
+  pedidoMinimoSeries     Int      @default(2)
+  pedidoMinimoMonto      Decimal  @default(1000) @db.Decimal(12, 2)
+  // true: se exige cualquiera de los dos mínimos; false: ambos.
+  pedidoMinimoCualquiera Boolean  @default(true)
+  descuentoMaxVendedor   Decimal  @default(5) @db.Decimal(5, 2)
+  descuentoMaxSupervisor Decimal  @default(10) @db.Decimal(5, 2)
+  // Estados de cliente
+  diasClienteNuevo       Int      @default(90)
+  factorEnRiesgo         Decimal  @default(1.5) @db.Decimal(4, 2)
+  diasClienteInactivo    Int      @default(180)
+  frecuenciaDefectoDias  Int      @default(30)
+  // Semáforo de metas (% de cumplimiento contra el avance esperado)
+  semaforoVerde          Int      @default(90)
+  semaforoAmarillo       Int      @default(70)
+  // Categoría A/B/C por compras netas de los últimos 12 meses
+  umbralCategoriaA       Decimal  @default(30000) @db.Decimal(12, 2)
+  umbralCategoriaB       Decimal  @default(10000) @db.Decimal(12, 2)
+  reservarStockAlPagar   Boolean  @default(true)
+  updatedAt              DateTime @updatedAt
+}
+
+// ─────────────────────────────── Clientes (CRM) ───────────────────────────────
+
+enum TipoCliente {
+  TIENDA
+  REVENDEDOR
+  DISTRIBUIDOR
+  OTRO
+}
+
+enum CategoriaCliente {
+  A
+  B
+  C
+}
+
+enum EstadoCliente {
+  PROSPECTO // aún sin compras
+  NUEVO
+  ACTIVO
+  EN_RIESGO
+  INACTIVO
+}
+
+model Cliente {
+  id              String           @id @default(cuid())
+  ruc             String           @unique @db.Char(11)
+  razonSocial     String
+  nombreComercial String?
+  tipo            TipoCliente      @default(TIENDA)
+  categoria       CategoriaCliente @default(C)
+  categoriaManual Boolean          @default(false) // si true, el cálculo automático no la cambia
+  estado          EstadoCliente    @default(PROSPECTO)
+  contactoNombre  String?
+  telefono        String?
+  whatsapp        String?
+  email           String?
+  direccion       String?
+  distrito        String?
+  ciudad          String
+  departamento    String?
+  notas           String?
+
+  zonaId        String?
+  zona          Zona?        @relation(fields: [zonaId], references: [id])
+  vendedorId    String?
+  vendedor      User?        @relation("ClienteVendedor", fields: [vendedorId], references: [id])
+  listaPrecioId String?
+  listaPrecio   ListaPrecio? @relation(fields: [listaPrecioId], references: [id])
+
+  // Métricas desnormalizadas (se recalculan al registrar pedidos y por el cron diario)
+  primeraCompra    DateTime?
+  ultimaCompra     DateTime?
+  frecuenciaDias   Int?
+  ticketPromedio   Decimal?  @db.Decimal(12, 2)
+  totalComprado12m Decimal   @default(0) @db.Decimal(12, 2)
+  numeroPedidos    Int       @default(0)
+
+  etiquetas           ClienteEtiqueta[]
+  historialAsignacion ClienteAsignacionHistorial[]
+  oportunidades       Oportunidad[]
+  actividades         Actividad[]
+  cotizaciones        Cotizacion[]
+  pedidos             Pedido[]
+  alertas             AlertaRecompra[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vendedorId])
+  @@index([estado])
+  @@index([zonaId])
+}
+
+model Etiqueta {
+  id       String            @id @default(cuid())
+  nombre   String            @unique
+  color    String            @default("#64748b")
+  clientes ClienteEtiqueta[]
+}
+
+model ClienteEtiqueta {
+  clienteId  String
+  etiquetaId String
+  cliente    Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  etiqueta   Etiqueta @relation(fields: [etiquetaId], references: [id], onDelete: Cascade)
+
+  @@id([clienteId, etiquetaId])
+}
+
+model ClienteAsignacionHistorial {
+  id              String   @id @default(cuid())
+  clienteId       String
+  cliente         Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  desdeVendedorId String?
+  desdeVendedor   User?    @relation("AsignacionDesde", fields: [desdeVendedorId], references: [id])
+  haciaVendedorId String?
+  haciaVendedor   User?    @relation("AsignacionHacia", fields: [haciaVendedorId], references: [id])
+  asignadoPorId   String
+  asignadoPor     User     @relation("AsignacionPor", fields: [asignadoPorId], references: [id])
+  motivo          String?
+  createdAt       DateTime @default(now())
+
+  @@index([clienteId])
+}
+
+// ─────────────────────────────── Pipeline ───────────────────────────────
+
+enum EtapaOportunidad {
+  PROSPECTO
+  CONTACTADO
+  COTIZACION_ENVIADA
+  NEGOCIACION
+  GANADO
+  PERDIDO
+}
+
+model Oportunidad {
+  id                  String           @id @default(cuid())
+  titulo              String
+  etapa               EtapaOportunidad @default(PROSPECTO)
+  valorEstimado       Decimal          @default(0) @db.Decimal(12, 2)
+  paresEstimados      Int?
+  fechaCierreProbable DateTime?
+  fechaCierreReal     DateTime?
+  motivoPerdida       String?
+  orden               Int              @default(0) // posición dentro de la columna del kanban
+  notas               String?
+
+  clienteId  String
+  cliente    Cliente @relation(fields: [clienteId], references: [id])
+  vendedorId String
+  vendedor   User    @relation(fields: [vendedorId], references: [id])
+
+  actividades  Actividad[]
+  cotizaciones Cotizacion[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vendedorId, etapa])
+}
+
+// ─────────────────────────────── Actividades ───────────────────────────────
+
+enum TipoActividad {
+  LLAMADA
+  WHATSAPP
+  VISITA
+  REUNION
+  EMAIL
+  TAREA
+}
+
+enum ResultadoActividad {
+  PENDIENTE
+  EXITOSA
+  SIN_RESPUESTA
+  REPROGRAMADA
+  NO_INTERESADO
+}
+
+model Actividad {
+  id                 String             @id @default(cuid())
+  tipo               TipoActividad
+  asunto             String
+  descripcion        String?
+  resultado          ResultadoActividad @default(PENDIENTE)
+  fechaProgramada    DateTime
+  fechaRealizada     DateTime?
+  completada         Boolean            @default(false)
+  proximaAccion      String?
+  proximaAccionFecha DateTime?
+
+  clienteId     String?
+  cliente       Cliente?     @relation(fields: [clienteId], references: [id])
+  oportunidadId String?
+  oportunidad   Oportunidad? @relation(fields: [oportunidadId], references: [id])
+  vendedorId    String
+  vendedor      User         @relation(fields: [vendedorId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vendedorId, completada, fechaProgramada])
+  @@index([clienteId])
+}
+
+model PlantillaWhatsApp {
+  id        String   @id @default(cuid())
+  nombre    String
+  // Admite variables: {cliente}, {contacto}, {vendedor}, {empresa}
+  mensaje   String
+  activa    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────── Catálogo ───────────────────────────────
+
+enum Genero {
+  CABALLERO
+  DAMA
+  NINO
+  UNISEX
+}
+
+// Distribución de pares por talla en una serie. Ej.: {"38":1,"39":2,"40":3,"41":3,"42":2,"43":1}
+model CurvaTallas {
+  id            String   @id @default(cuid())
+  nombre        String   @unique
+  genero        Genero   @default(CABALLERO)
+  distribucion  Json
+  paresPorSerie Int
+  modelos       Modelo[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Modelo {
+  id              String           @id @default(cuid())
+  sku             String           @unique
+  nombre          String
+  descripcion     String?
+  genero          Genero           @default(CABALLERO)
+  material        String           @default("Cuero")
+  fotos           String[]
+  // Precio base por PAR, sin IGV. Las listas de precios pueden sobrescribirlo.
+  precioBase      Decimal          @db.Decimal(12, 2)
+  costo           Decimal?         @db.Decimal(12, 2)
+  activo          Boolean          @default(true)
+  curvaId         String
+  curva           CurvaTallas      @relation(fields: [curvaId], references: [id])
+  variantes       Variante[]
+  preciosLista    PrecioLista[]
+  itemsCotizacion ItemCotizacion[]
+  itemsPedido     ItemPedido[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+}
+
+model Color {
+  id              String           @id @default(cuid())
+  nombre          String           @unique
+  hex             String?
+  variantes       Variante[]
+  itemsCotizacion ItemCotizacion[]
+  itemsPedido     ItemPedido[]
+}
+
+// Stock por modelo + color + talla
+model Variante {
+  id             String   @id @default(cuid())
+  modeloId       String
+  modelo         Modelo   @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  colorId        String
+  color          Color    @relation(fields: [colorId], references: [id])
+  talla          Int
+  stock          Int      @default(0)
+  stockReservado Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([modeloId, colorId, talla])
+}
+
+// ─────────────────────────────── Precios ───────────────────────────────
+
+model ListaPrecio {
+  id               String         @id @default(cuid())
+  nombre           String         @unique
+  tipoCliente      TipoCliente?
+  // Ajuste general sobre el precio base (ej. -5 = 5 % menos)
+  ajustePorcentaje Decimal        @default(0) @db.Decimal(5, 2)
+  activa           Boolean        @default(true)
+  precios          PrecioLista[]
+  escalas          EscalaPrecio[]
+  clientes         Cliente[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+// Precio específico de un modelo dentro de una lista (opcional)
+model PrecioLista {
+  id       String      @id @default(cuid())
+  listaId  String
+  lista    ListaPrecio @relation(fields: [listaId], references: [id], onDelete: Cascade)
+  modeloId String
+  modelo   Modelo      @relation(fields: [modeloId], references: [id], onDelete: Cascade)
+  precio   Decimal     @db.Decimal(12, 2)
+
+  @@unique([listaId, modeloId])
+}
+
+// Descuento por volumen: desde N series en el pedido, X % de descuento
+model EscalaPrecio {
+  id                  String       @id @default(cuid())
+  listaId             String?
+  lista               ListaPrecio? @relation(fields: [listaId], references: [id], onDelete: Cascade)
+  desdeSeries         Int
+  descuentoPorcentaje Decimal      @db.Decimal(5, 2)
+
+  @@unique([listaId, desdeSeries])
+}
+
+// ─────────────────────────────── Cotizaciones y pedidos ───────────────────────────────
+
+enum EstadoCotizacion {
+  BORRADOR
+  PENDIENTE_APROBACION
+  ENVIADA
+  ACEPTADA
+  RECHAZADA
+  VENCIDA
+  CONVERTIDA
+}
+
+model Cotizacion {
+  id                  String                @id @default(cuid())
+  numero              Int                   @unique @default(autoincrement())
+  estado              EstadoCotizacion      @default(BORRADOR)
+  clienteId           String
+  cliente             Cliente               @relation(fields: [clienteId], references: [id])
+  vendedorId          String
+  vendedor            User                  @relation(fields: [vendedorId], references: [id])
+  oportunidadId       String?
+  oportunidad         Oportunidad?          @relation(fields: [oportunidadId], references: [id])
+  validaHasta         DateTime?
+  subtotal            Decimal               @default(0) @db.Decimal(12, 2)
+  descuentoVolumen    Decimal               @default(0) @db.Decimal(12, 2)
+  descuentoPorcentaje Decimal               @default(0) @db.Decimal(5, 2) // descuento manual del vendedor
+  descuentoMonto      Decimal               @default(0) @db.Decimal(12, 2)
+  baseImponible       Decimal               @default(0) @db.Decimal(12, 2)
+  igv                 Decimal               @default(0) @db.Decimal(12, 2)
+  total               Decimal               @default(0) @db.Decimal(12, 2)
+  notas               String?
+  items               ItemCotizacion[]
+  aprobaciones        AprobacionDescuento[]
+  pedido              Pedido?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([vendedorId, estado])
+}
+
+model ItemCotizacion {
+  id           String     @id @default(cuid())
+  cotizacionId String
+  cotizacion   Cotizacion @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+  modeloId     String
+  modelo       Modelo     @relation(fields: [modeloId], references: [id])
+  colorId      String
+  color        Color      @relation(fields: [colorId], references: [id])
+  series       Int // número de series
+  pares        Int // series * pares por serie
+  precioPar    Decimal    @db.Decimal(12, 2)
+  subtotal     Decimal    @db.Decimal(12, 2)
+}
+
+enum EstadoAprobacion {
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+}
+
+model AprobacionDescuento {
+  id                  String           @id @default(cuid())
+  cotizacionId        String
+  cotizacion          Cotizacion       @relation(fields: [cotizacionId], references: [id], onDelete: Cascade)
+  solicitanteId       String
+  solicitante         User             @relation("AprobacionSolicitante", fields: [solicitanteId], references: [id])
+  aprobadorId         String?
+  aprobador           User?            @relation("AprobacionAprobador", fields: [aprobadorId], references: [id])
+  descuentoSolicitado Decimal          @db.Decimal(5, 2)
+  estado              EstadoAprobacion @default(PENDIENTE)
+  comentario          String?
+  createdAt           DateTime         @default(now())
+  resueltaAt          DateTime?
+}
+
+enum EstadoPedido {
+  PENDIENTE_PAGO
+  PAGO_VERIFICADO
+  EN_PREPARACION
+  ENVIADO
+  ENTREGADO
+  CANCELADO
+}
+
+model Pedido {
+  id                String       @id @default(cuid())
+  numero            Int          @unique @default(autoincrement())
+  estado            EstadoPedido @default(PENDIENTE_PAGO)
+  clienteId         String
+  cliente           Cliente      @relation(fields: [clienteId], references: [id])
+  vendedorId        String
+  vendedor          User         @relation(fields: [vendedorId], references: [id])
+  cotizacionId      String?      @unique
+  cotizacion        Cotizacion?  @relation(fields: [cotizacionId], references: [id])
+  fecha             DateTime     @default(now())
+  subtotal          Decimal      @default(0) @db.Decimal(12, 2)
+  descuentoMonto    Decimal      @default(0) @db.Decimal(12, 2)
+  baseImponible     Decimal      @default(0) @db.Decimal(12, 2)
+  igv               Decimal      @default(0) @db.Decimal(12, 2)
+  total             Decimal      @default(0) @db.Decimal(12, 2)
+  totalPares        Int          @default(0)
+  totalSeries       Int          @default(0)
+  // Envío
+  agenciaEnvio      String?
+  numeroGuia        String?
+  direccionEnvio    String?
+  fechaEnvio        DateTime?
+  fechaEntrega      DateTime?
+  // Comprobante (la facturación electrónica se emite fuera del sistema)
+  comprobante       String?
+  esPrimerPedido    Boolean      @default(false) // cliente nuevo (para comisiones/metas)
+  esReactivacion    Boolean      @default(false) // cliente que volvió tras estar inactivo
+  motivoCancelacion String?
+  notas             String?
+
+  items     ItemPedido[]
+  historial PedidoEstadoHistorial[]
+  pagos     Pago[]
+  createdAt DateTime                @default(now())
+  updatedAt DateTime                @updatedAt
+
+  @@index([vendedorId, fecha])
+  @@index([clienteId, fecha])
+  @@index([estado])
+}
+
+model ItemPedido {
+  id        String  @id @default(cuid())
+  pedidoId  String
+  pedido    Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  modeloId  String
+  modelo    Modelo  @relation(fields: [modeloId], references: [id])
+  colorId   String
+  color     Color   @relation(fields: [colorId], references: [id])
+  series    Int
+  pares     Int
+  precioPar Decimal @db.Decimal(12, 2)
+  subtotal  Decimal @db.Decimal(12, 2)
+
+  @@index([modeloId])
+}
+
+model PedidoEstadoHistorial {
+  id             String        @id @default(cuid())
+  pedidoId       String
+  pedido         Pedido        @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  estadoAnterior EstadoPedido?
+  estadoNuevo    EstadoPedido
+  usuarioId      String
+  usuario        User          @relation(fields: [usuarioId], references: [id])
+  comentario     String?
+  createdAt      DateTime      @default(now())
+}
+
+enum MetodoPago {
+  TRANSFERENCIA
+  DEPOSITO
+  YAPE
+  PLIN
+  EFECTIVO
+  OTRO
+}
+
+model Pago {
+  id              String     @id @default(cuid())
+  pedidoId        String
+  pedido          Pedido     @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  monto           Decimal    @db.Decimal(12, 2)
+  metodo          MetodoPago @default(TRANSFERENCIA)
+  referencia      String?
+  fecha           DateTime   @default(now())
+  verificado      Boolean    @default(false)
+  verificadoPorId String?
+  verificadoPor   User?      @relation(fields: [verificadoPorId], references: [id])
+  verificadoAt    DateTime?
+  createdAt       DateTime   @default(now())
+
+  @@index([fecha])
+}
+
+// ─────────────────────────────── Metas y comisiones ───────────────────────────────
+
+enum TipoMeta {
+  SOLES
+  PARES
+  CLIENTES_NUEVOS
+  CLIENTES_REACTIVADOS
+}
+
+enum PeriodoMeta {
+  MENSUAL
+  TRIMESTRAL
+}
+
+model Meta {
+  id                 String      @id @default(cuid())
+  tipo               TipoMeta
+  periodo            PeriodoMeta @default(MENSUAL)
+  anio               Int
+  mes                Int? // 1-12 si es mensual
+  trimestre          Int? // 1-4 si es trimestral
+  valor              Decimal     @db.Decimal(12, 2)
+  // Meta individual (vendedorId) o de equipo (supervisorId del equipo); null en ambos = meta de empresa
+  vendedorId         String?
+  vendedor           User?       @relation(fields: [vendedorId], references: [id])
+  equipoSupervisorId String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@index([anio, mes])
+  @@index([vendedorId])
+}
+
+enum TipoReglaComision {
+  PORCENTAJE_VENTA_COBRADA
+  BONO_CUMPLIMIENTO_META
+  BONO_CLIENTE_NUEVO
+  BONO_CLIENTE_REACTIVADO
+}
+
+model ReglaComision {
+  id                 String            @id @default(cuid())
+  nombre             String
+  tipo               TipoReglaComision
+  // % para PORCENTAJE_VENTA_COBRADA; monto S/ para bonos
+  valor              Decimal           @db.Decimal(12, 2)
+  // Para BONO_CUMPLIMIENTO_META: % mínimo de cumplimiento (ej. 100)
+  umbralCumplimiento Decimal?          @db.Decimal(5, 2)
+  activa             Boolean           @default(true)
+  vigenteDesde       DateTime          @default(now())
+  vigenteHasta       DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+enum EstadoLiquidacion {
+  BORRADOR
+  APROBADA
+  PAGADA
+}
+
+model LiquidacionComision {
+  id            String            @id @default(cuid())
+  vendedorId    String
+  vendedor      User              @relation(fields: [vendedorId], references: [id])
+  anio          Int
+  mes           Int
+  ventaCobrada  Decimal           @db.Decimal(12, 2)
+  comisionVenta Decimal           @db.Decimal(12, 2)
+  bonos         Decimal           @db.Decimal(12, 2)
+  total         Decimal           @db.Decimal(12, 2)
+  detalle       Json
+  estado        EstadoLiquidacion @default(BORRADOR)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([vendedorId, anio, mes])
+}
+
+// ─────────────────────────────── Alertas ───────────────────────────────
+
+model AlertaRecompra {
+  id             String    @id @default(cuid())
+  clienteId      String
+  cliente        Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  vendedorId     String?
+  vendedor       User?     @relation(fields: [vendedorId], references: [id])
+  diasSinCompra  Int
+  frecuenciaDias Int
+  atendida       Boolean   @default(false)
+  atendidaAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([vendedorId, atendida])
+}
+
+// ─────────────────────────────── Auditoría ───────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  usuarioId String?
+  usuario   User?    @relation(fields: [usuarioId], references: [id])
+  accion    String // ej. "cliente.reasignar", "precio.actualizar", "descuento.aprobar"
+  entidad   String
+  entidadId String?
+  antes     Json?
+  despues   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entidad, entidadId])
+  @@index([usuarioId])
+  @@index([createdAt])
+}

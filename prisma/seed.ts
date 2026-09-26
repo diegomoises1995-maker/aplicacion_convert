@@ -5,6 +5,8 @@ import bcrypt from "bcryptjs";
 import { completarRuc } from "../src/lib/ruc";
 import { calcularTotales } from "../src/lib/precios";
 import { calcularCategoria, calcularEstadoCliente, calcularFrecuenciaDias } from "../src/lib/clientes";
+import { calcularComision, sinIgv } from "../src/lib/comisiones";
+import { partesLima, rangoMes, sumarMeses } from "../src/lib/fechas";
 
 const db = new PrismaClient();
 const PASSWORD_DEMO = process.env.SEED_PASSWORD ?? "Convert2026";
@@ -63,6 +65,7 @@ async function main() {
   await seedPedidos();
   await seedCotizaciones();
   await recalcularClientes();
+  await seedMetasYComisiones();
 
   const plantillas = [
     {
@@ -300,7 +303,7 @@ async function seedPrecios() {
   if (botin) await db.precioLista.create({ data: { listaId: distrib.id, modeloId: botin.id, precio: 119 } });
 }
 
-// ─────────────────────────── Pedidos (13 meses) ───────────────────────────
+// ─────────────────────────── Pedidos (24 meses) ───────────────────────────
 type Perfil = "PROSPECTO" | "ACTIVO" | "NUEVO" | "EN_RIESGO" | "INACTIVO";
 
 async function datosPrecios() {
@@ -349,7 +352,7 @@ async function seedPedidos() {
   const admin = await db.user.findUniqueOrThrow({ where: { email: "gerente@convert.pe" } });
   const clientes = await db.cliente.findMany({ where: { vendedorId: { not: null } }, orderBy: { ruc: "asc" } });
   const ahora = Date.now();
-  const inicioHistoria = ahora - 400 * DIA; // ~13 meses
+  const inicioHistoria = ahora - 730 * DIA; // 24 meses: permite comparar contra el año anterior
   const perfiles: Perfil[] = [
     "ACTIVO", "ACTIVO", "EN_RIESGO", "ACTIVO", "NUEVO", "ACTIVO", "INACTIVO", "ACTIVO", "EN_RIESGO", "ACTIVO",
     "ACTIVO", "PROSPECTO", "ACTIVO", "EN_RIESGO", "NUEVO", "ACTIVO", "INACTIVO", "ACTIVO", "ACTIVO", "EN_RIESGO",
@@ -364,9 +367,9 @@ async function seedPedidos() {
     let fin: number;
     switch (perfil) {
       case "NUEVO": fecha = ahora - entre(30, 80) * DIA; fin = ahora - entre(0, 10) * DIA; break;
-      case "EN_RIESGO": fecha = inicioHistoria + entre(0, 40) * DIA; fin = ahora - Math.round(frecuencia * 1.8) * DIA; break;
-      case "INACTIVO": fecha = inicioHistoria + entre(0, 30) * DIA; fin = ahora - entre(190, 240) * DIA; break;
-      default: fecha = inicioHistoria + entre(0, 30) * DIA; fin = ahora - entre(0, 15) * DIA;
+      case "EN_RIESGO": fecha = inicioHistoria + entre(0, 60) * DIA; fin = ahora - Math.round(frecuencia * 1.8) * DIA; break;
+      case "INACTIVO": fecha = inicioHistoria + entre(0, 90) * DIA; fin = ahora - entre(190, 240) * DIA; break;
+      default: fecha = inicioHistoria + entre(0, 120) * DIA; fin = ahora - entre(0, 15) * DIA;
     }
     let primero = true;
     while (fecha <= fin) {
@@ -471,6 +474,90 @@ async function seedCotizaciones() {
         aprobaciones: estado === "PENDIENTE_APROBACION" ? { create: { solicitanteId: c.vendedorId!, descuentoSolicitado: descuento } } : undefined,
       },
     });
+  }
+}
+
+// ─────────────────────────── Metas y comisiones ───────────────────────────
+async function seedMetasYComisiones() {
+  if ((await db.reglaComision.count()) === 0) {
+    const desde = new Date("2025-01-01T05:00:00Z");
+    await db.reglaComision.createMany({
+      data: [
+        { nombre: "Comisión 3 % sobre lo cobrado", tipo: "PORCENTAJE_VENTA_COBRADA", valor: 3, vigenteDesde: desde },
+        { nombre: "Bono meta cumplida (100 %)", tipo: "BONO_CUMPLIMIENTO_META", valor: 300, umbralCumplimiento: 100, vigenteDesde: desde },
+        { nombre: "Bono sobrecumplimiento (120 %)", tipo: "BONO_CUMPLIMIENTO_META", valor: 600, umbralCumplimiento: 120, vigenteDesde: desde },
+        { nombre: "Bono por cliente nuevo", tipo: "BONO_CLIENTE_NUEVO", valor: 50, vigenteDesde: desde },
+        { nombre: "Bono por cliente reactivado", tipo: "BONO_CLIENTE_REACTIVADO", valor: 30, vigenteDesde: desde },
+      ],
+    });
+  }
+  if ((await db.meta.count()) > 0) return;
+
+  const vendedores = await db.user.findMany({ where: { rol: "VENDEDOR" } });
+  const supervisor = await db.user.findUniqueOrThrow({ where: { email: "supervisor@convert.pe" } });
+  const reglas = (await db.reglaComision.findMany()).map((r) => ({
+    id: r.id, nombre: r.nombre, tipo: r.tipo, valor: Number(r.valor), umbralCumplimiento: r.umbralCumplimiento === null ? null : Number(r.umbralCumplimiento),
+  }));
+  const hoy = partesLima();
+  const redondeoMil = (n: number) => Math.max(1000, Math.round(n / 1000) * 1000);
+
+  for (let k = -12; k <= 0; k++) {
+    const { anio, mes } = sumarMeses(hoy.anio, hoy.mes, k);
+    const { inicio, fin } = rangoMes(anio, mes);
+    let totalEquipo = 0;
+    for (const v of vendedores) {
+      const ventas = await db.pedido.aggregate({
+        where: { vendedorId: v.id, fecha: { gte: inicio, lt: fin }, estado: { in: ["PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO", "ENTREGADO"] } },
+        _sum: { baseImponible: true, totalPares: true },
+      });
+      // Meta del mes en curso: promedio de los 3 meses previos + 8 %; meses pasados: alrededor de lo vendido
+      let base = Number(ventas._sum.baseImponible ?? 0);
+      if (k === 0) {
+        const m3 = sumarMeses(anio, mes, -3);
+        const r3 = rangoMes(m3.anio, m3.mes);
+        const prev = await db.pedido.aggregate({
+          where: { vendedorId: v.id, fecha: { gte: r3.inicio, lt: inicio }, estado: { in: ["PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO", "ENTREGADO"] } },
+          _sum: { baseImponible: true },
+        });
+        base = (Number(prev._sum.baseImponible ?? 0) / 3) * 1.08;
+      }
+      const metaSoles = redondeoMil(base * (k === 0 ? 1 : 0.85 + azar() * 0.35));
+      totalEquipo += metaSoles;
+      const paresMeta = Math.max(12, Math.round(((ventas._sum.totalPares ?? 0) * (k === 0 ? 1.1 : 0.9 + azar() * 0.3)) / 12) * 12);
+      await db.meta.createMany({
+        data: [
+          { tipo: "SOLES", periodo: "MENSUAL", anio, mes, vendedorId: v.id, valor: metaSoles },
+          { tipo: "PARES", periodo: "MENSUAL", anio, mes, vendedorId: v.id, valor: paresMeta },
+          { tipo: "CLIENTES_NUEVOS", periodo: "MENSUAL", anio, mes, vendedorId: v.id, valor: 1 },
+          { tipo: "CLIENTES_REACTIVADOS", periodo: "MENSUAL", anio, mes, vendedorId: v.id, valor: 1 },
+        ],
+      });
+
+      // Liquidaciones de meses cerrados
+      if (k < 0) {
+        const cobrado = await db.pago.aggregate({
+          where: { verificado: true, fecha: { gte: inicio, lt: fin }, pedido: { vendedorId: v.id, estado: { not: "CANCELADO" } } },
+          _sum: { monto: true },
+        });
+        const nuevos = await db.pedido.count({ where: { vendedorId: v.id, fecha: { gte: inicio, lt: fin }, esPrimerPedido: true, estado: { not: "CANCELADO" } } });
+        const resultados = {
+          ventaCobrada: sinIgv(Number(cobrado._sum.monto ?? 0), 18),
+          cumplimientoSoles: Number(ventas._sum.baseImponible ?? 0) / metaSoles,
+          clientesNuevos: nuevos,
+          clientesReactivados: 0,
+        };
+        const c = calcularComision(resultados, reglas);
+        await db.liquidacionComision.create({
+          data: {
+            vendedorId: v.id, anio, mes, ventaCobrada: resultados.ventaCobrada, comisionVenta: c.comisionVenta, bonos: c.bonos, total: c.total,
+            detalle: JSON.parse(JSON.stringify({ resultados, lineas: c.lineas })),
+            estado: k === -1 ? "APROBADA" : "PAGADA",
+          },
+        });
+      }
+    }
+    await db.meta.create({ data: { tipo: "SOLES", periodo: "MENSUAL", anio, mes, equipoSupervisorId: supervisor.id, valor: totalEquipo } });
+    await db.meta.create({ data: { tipo: "SOLES", periodo: "MENSUAL", anio, mes, valor: totalEquipo } });
   }
 }
 

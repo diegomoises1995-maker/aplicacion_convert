@@ -62,8 +62,11 @@ export function tienePermiso(rol: Rol, permiso: Permiso): boolean {
 
 // Rutas que requieren un permiso concreto. El middleware las bloquea antes de
 // renderizar; las páginas y acciones de servidor vuelven a validar.
+// Las más específicas primero.
 const RUTAS_PROTEGIDAS: { prefijo: string; permiso: Permiso }[] = [
+  { prefijo: "/equipo/nuevo", permiso: "usuarios.gestionar" },
   { prefijo: "/equipo", permiso: "equipo.ver" },
+  { prefijo: "/clientes/importar", permiso: "clientes.importar" },
   { prefijo: "/configuracion", permiso: "configuracion.editar" },
   { prefijo: "/auditoria", permiso: "auditoria.ver" },
 ];

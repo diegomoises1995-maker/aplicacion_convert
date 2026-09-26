@@ -3,13 +3,14 @@
 import { useActionState } from "react";
 import { iniciarSesion } from "@/server/acciones/auth";
 import { Button } from "@/components/ui/button";
+import { Formulario } from "@/components/ui/formulario";
 import { Campo, Input } from "@/components/ui/input";
 
 export function FormularioLogin({ callbackUrl }: { callbackUrl?: string }) {
   const [estado, accion, pendiente] = useActionState(iniciarSesion, undefined);
 
   return (
-    <form action={accion} className="space-y-4">
+    <Formulario accion={accion} pendiente={pendiente} className="space-y-4">
       <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
       <Campo label="Correo" htmlFor="email">
         <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required />
@@ -25,6 +26,6 @@ export function FormularioLogin({ callbackUrl }: { callbackUrl?: string }) {
       <Button type="submit" className="w-full" disabled={pendiente}>
         {pendiente ? "Ingresando…" : "Ingresar"}
       </Button>
-    </form>
+    </Formulario>
   );
 }

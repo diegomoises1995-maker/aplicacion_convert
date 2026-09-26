@@ -4,7 +4,11 @@ import { filtroEquipo } from "@/lib/alcance";
 import { requirePermiso, getAlcance } from "@/server/sesion";
 import { NOMBRE_ROL } from "@/lib/permisos";
 import { formatFecha } from "@/lib/format";
+import Link from "next/link";
+import { Plus } from "lucide-react";
+import { tienePermiso } from "@/lib/permisos";
 import { Badge, Card, EncabezadoPagina } from "@/components/ui/card";
+import { BotonLink } from "@/components/ui/varios";
 
 export const metadata: Metadata = { title: "Equipo" };
 
@@ -27,6 +31,7 @@ export default async function EquipoPage() {
       ultimoAcceso: true,
       zona: { select: { nombre: true } },
       supervisor: { select: { nombre: true } },
+      _count: { select: { clientes: true } },
     },
     orderBy: [{ activo: "desc" }, { rol: "asc" }, { nombre: "asc" }],
   });
@@ -36,10 +41,16 @@ export default async function EquipoPage() {
       <EncabezadoPagina
         titulo="Equipo"
         descripcion={usuario.rol === "ADMIN" ? "Todos los usuarios de la empresa" : "Vendedores de tu equipo"}
+        acciones={
+          tienePermiso(usuario.rol, "usuarios.gestionar") && (
+            <BotonLink href="/equipo/nuevo"><Plus className="size-4" aria-hidden /> Nuevo usuario</BotonLink>
+          )
+        }
       />
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {miembros.map((m) => (
-          <Card key={m.id} className={m.activo ? "" : "opacity-60"}>
+          <Link key={m.id} href={`/equipo/${m.id}`} className="block">
+          <Card className={m.activo ? "h-full hover:border-marca-200" : "h-full opacity-60"}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="truncate font-medium">{m.nombre}</p>
@@ -58,8 +69,11 @@ export default async function EquipoPage() {
               <dd>{CANAL[m.canal]}</dd>
               <dt className="text-texto-suave">Último acceso</dt>
               <dd>{formatFecha(m.ultimoAcceso, true)}</dd>
+              <dt className="text-texto-suave">Clientes</dt>
+              <dd>{m._count.clientes}</dd>
             </dl>
           </Card>
+          </Link>
         ))}
       </div>
     </>

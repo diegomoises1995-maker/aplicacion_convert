@@ -2,7 +2,7 @@
 
 Aplicación web para gestionar al equipo de ventas de **Convert**, empresa peruana que vende zapatillas de cuero al por mayor. Pensada primero para celular y escrita íntegramente en español.
 
-> **Estado:** Fase 1 completada (base de datos, autenticación y roles). Las demás fases están en el [plan](#plan-por-fases).
+> **Estado:** ver el [plan por fases](#plan-por-fases).
 
 ## Stack
 
@@ -137,7 +137,7 @@ tests/                 Pruebas de permisos y alcance
 ## Plan por fases
 
 - [x] **Fase 1:** base de datos, autenticación y roles
-- [ ] **Fase 2:** gestión del equipo y cartera de clientes (con importación CSV/Excel)
+- [x] **Fase 2:** gestión del equipo y cartera de clientes (con importación CSV/Excel)
 - [ ] **Fase 3:** actividades, seguimiento y pipeline
 - [ ] **Fase 4:** catálogo, cotizaciones y pedidos
 - [ ] **Fase 5:** metas, comisiones y dashboards

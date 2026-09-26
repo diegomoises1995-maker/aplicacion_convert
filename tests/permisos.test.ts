@@ -32,11 +32,16 @@ describe("permisos por rol", () => {
     expect(puedeAccederRuta("VENDEDOR", "/")).toBe(true);
     // Un prefijo parecido no debe confundirse con la ruta protegida
     expect(puedeAccederRuta("VENDEDOR", "/equipos-publicos")).toBe(true);
+    expect(puedeAccederRuta("SUPERVISOR", "/equipo/nuevo")).toBe(false);
+    expect(puedeAccederRuta("VENDEDOR", "/clientes/importar")).toBe(false);
+    expect(puedeAccederRuta("VENDEDOR", "/clientes")).toBe(true);
+    expect(puedeAccederRuta("SUPERVISOR", "/configuracion/zonas")).toBe(false);
   });
 
   it("el menú solo muestra lo permitido", () => {
     const hrefs = (rol: Parameters<typeof menuPara>[0]) => menuPara(rol).map((i) => i.href);
     expect(hrefs("VENDEDOR")).not.toContain("/equipo");
+    expect(hrefs("VENDEDOR")).toContain("/clientes");
     expect(hrefs("SUPERVISOR")).toContain("/equipo");
     expect(hrefs("SUPERVISOR")).not.toContain("/auditoria");
     expect(hrefs("ADMIN")).toContain("/auditoria");

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { House, ShieldCheck, UserRound, Users, type LucideIcon } from "lucide-react";
+import { Building2, House, Settings, ShieldCheck, UserRound, Users, type LucideIcon } from "lucide-react";
 import type { IconoNav, ItemNav } from "@/lib/navegacion";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,8 @@ const ICONOS: Record<IconoNav, LucideIcon> = {
   equipo: Users,
   auditoria: ShieldCheck,
   perfil: UserRound,
+  clientes: Building2,
+  configuracion: Settings,
 };
 
 function activo(pathname: string, href: string) {

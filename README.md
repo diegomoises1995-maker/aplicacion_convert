@@ -139,6 +139,6 @@ tests/                 Pruebas de permisos y alcance
 - [x] **Fase 1:** base de datos, autenticación y roles
 - [x] **Fase 2:** gestión del equipo y cartera de clientes (con importación CSV/Excel)
 - [x] **Fase 3:** actividades, seguimiento y pipeline
-- [ ] **Fase 4:** catálogo, cotizaciones y pedidos
+- [x] **Fase 4:** catálogo, cotizaciones y pedidos
 - [ ] **Fase 5:** metas, comisiones y dashboards
 - [ ] **Fase 6:** alertas de recompra, reportes y ajustes finales

@@ -23,6 +23,14 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Las rejillas sin columnas explícitas no deben crecer con su contenido (p. ej. un <select> con
+   opciones largas) y desbordar la pantalla del celular. Los grid-cols-* de Tailwind lo sobrescriben. */
+@layer base {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 body {
   background: var(--color-fondo);
   color: var(--color-texto);

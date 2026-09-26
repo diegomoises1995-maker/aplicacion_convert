@@ -2,7 +2,7 @@ import { tienePermiso, type Permiso, type Rol } from "@/lib/permisos";
 
 export type IconoNav =
   | "inicio" | "agenda" | "clientes" | "pipeline" | "cotizaciones" | "pedidos" | "catalogo" | "metas"
-  | "comisiones" | "reportes" | "equipo" | "configuracion" | "auditoria" | "perfil" | "mas";
+  | "comisiones" | "reportes" | "equipo" | "configuracion" | "auditoria" | "perfil" | "mas" | "aprobaciones";
 
 export type ItemNav = {
   href: string;
@@ -17,6 +17,10 @@ const ITEMS: ItemNav[] = [
   { href: "/agenda", titulo: "Agenda", icono: "agenda", movil: true },
   { href: "/clientes", titulo: "Clientes", icono: "clientes", movil: true },
   { href: "/pipeline", titulo: "Pipeline", icono: "pipeline", movil: true },
+  { href: "/cotizaciones", titulo: "Cotizaciones", icono: "cotizaciones" },
+  { href: "/pedidos", titulo: "Pedidos", icono: "pedidos" },
+  { href: "/catalogo", titulo: "Catálogo", icono: "catalogo" },
+  { href: "/aprobaciones", titulo: "Aprobaciones", icono: "aprobaciones", permiso: "descuentos.aprobar" },
   { href: "/equipo", titulo: "Equipo", icono: "equipo", permiso: "equipo.ver" },
   { href: "/configuracion", titulo: "Configuración", icono: "configuracion", permiso: "configuracion.editar" },
   { href: "/auditoria", titulo: "Auditoría", icono: "auditoria", permiso: "auditoria.ver" },

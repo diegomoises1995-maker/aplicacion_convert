@@ -76,7 +76,7 @@ export function Kanban({ inicial }: { inicial: Tarjeta[] }) {
         collisionDetection={colision}
         onDragEnd={alSoltar}
       >
-        <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 md:mx-0 md:px-0">
+        <div className="relative -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-4 md:mx-0 md:px-0">
           {ETAPAS.map((etapa) => {
             const col = tarjetas.filter((t) => t.etapa === etapa);
             return (
@@ -158,8 +158,8 @@ function TarjetaOp({ t, onMover }: { t: Tarjeta; onMover: (id: string, etapa: Et
       </div>
       {t.motivoPerdida && <p className="mt-1 text-xs text-red-700">Motivo: {t.motivoPerdida}</p>}
       <label className="mt-2 block md:hidden">
-        <span className="sr-only">Mover a</span>
         <select
+          aria-label="Mover a"
           className="h-9 w-full rounded-md border border-borde bg-fondo px-2 text-sm"
           value=""
           onChange={(e) => e.target.value && onMover(t.id, e.target.value as Etapa)}

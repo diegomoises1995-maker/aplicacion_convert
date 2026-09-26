@@ -1,5 +1,5 @@
 import {
-  BadgePercent, BarChart3, Building2, CalendarCheck, ClipboardList, FileText, Footprints, House, Menu, Settings,
+  BadgeCheck, BadgePercent, BarChart3, Building2, CalendarCheck, ClipboardList, FileText, Footprints, House, Menu, Settings,
   ShieldCheck, Target, Trophy, UserRound, Users, type LucideIcon,
 } from "lucide-react";
 import type { IconoNav } from "@/lib/navegacion";
@@ -21,4 +21,5 @@ export const ICONOS: Record<IconoNav, LucideIcon> = {
   auditoria: ShieldCheck,
   perfil: UserRound,
   mas: Menu,
+  aprobaciones: BadgeCheck,
 };

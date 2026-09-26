@@ -24,6 +24,7 @@ export type Permiso =
   | "catalogo.gestionar"
   | "descuentos.aprobar"
   | "pagos.verificar"
+  | "pedidos.gestionar" // preparación, envío, entrega y cancelación de pedidos pagados
   | "reportes.gerencia"
   | "configuracion.editar"
   | "auditoria.ver";
@@ -42,6 +43,7 @@ const PERMISOS: Record<Rol, readonly Permiso[]> = {
     "catalogo.gestionar",
     "descuentos.aprobar",
     "pagos.verificar",
+    "pedidos.gestionar",
     "reportes.gerencia",
     "configuracion.editar",
     "auditoria.ver",
@@ -67,6 +69,8 @@ const RUTAS_PROTEGIDAS: { prefijo: string; permiso: Permiso }[] = [
   { prefijo: "/equipo/nuevo", permiso: "usuarios.gestionar" },
   { prefijo: "/equipo", permiso: "equipo.ver" },
   { prefijo: "/clientes/importar", permiso: "clientes.importar" },
+  { prefijo: "/catalogo/nuevo", permiso: "catalogo.gestionar" },
+  { prefijo: "/aprobaciones", permiso: "descuentos.aprobar" },
   { prefijo: "/configuracion", permiso: "configuracion.editar" },
   { prefijo: "/auditoria", permiso: "auditoria.ver" },
 ];

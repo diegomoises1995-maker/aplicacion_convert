@@ -3,12 +3,15 @@
 import { PrismaClient, type Rol, type CanalVenta } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { completarRuc } from "../src/lib/ruc";
+import { calcularTotales } from "../src/lib/precios";
+import { calcularCategoria, calcularEstadoCliente, calcularFrecuenciaDias } from "../src/lib/clientes";
 
 const db = new PrismaClient();
 const PASSWORD_DEMO = process.env.SEED_PASSWORD ?? "Convert2026";
 
 async function main() {
-  await db.configuracion.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+  // Umbrales A/B/C acordes al volumen de los datos de prueba
+  await db.configuracion.upsert({ where: { id: 1 }, update: {}, create: { id: 1, umbralCategoriaA: 60000, umbralCategoriaB: 25000 } });
 
   const zonas = ["Lima Centro", "Lima Norte", "Lima Sur", "Norte", "Sur", "Centro", "Oriente"];
   for (const nombre of zonas) {
@@ -55,6 +58,11 @@ async function main() {
 
   await seedClientes();
   await seedPipeline();
+  await seedCatalogo();
+  await seedPrecios();
+  await seedPedidos();
+  await seedCotizaciones();
+  await recalcularClientes();
 
   const plantillas = [
     {
@@ -196,6 +204,306 @@ async function seedPipeline() {
         completada,
         fechaRealizada: completada ? fecha : null,
         resultado: completada ? elegir(["EXITOSA", "EXITOSA", "SIN_RESPUESTA", "REPROGRAMADA"] as const) : "PENDIENTE",
+      },
+    });
+  }
+}
+
+// ─────────────────────────── Catálogo ───────────────────────────
+const CURVAS = [
+  { nombre: "Caballero 38-43 (12 pares)", genero: "CABALLERO", distribucion: { "38": 1, "39": 2, "40": 3, "41": 3, "42": 2, "43": 1 } },
+  { nombre: "Dama 35-40 (12 pares)", genero: "DAMA", distribucion: { "35": 1, "36": 2, "37": 3, "38": 3, "39": 2, "40": 1 } },
+  { nombre: "Niño 27-32 (12 pares)", genero: "NINO", distribucion: { "27": 1, "28": 2, "29": 3, "30": 3, "31": 2, "32": 1 } },
+] as const;
+
+const COLORES: Record<string, string> = {
+  Marrón: "#6b3e1f", Negro: "#1c1917", Hueso: "#f5f0e8", Camel: "#8a5a2b", Gris: "#3f3f46", Vino: "#7c2d12",
+  Blanco: "#e7e5e4", Azul: "#1e3a8a", Verde: "#14532d", Fucsia: "#be185d", Beige: "#d6c7b0", Rojo: "#b91c1c", Turquesa: "#0e7490",
+};
+
+const MODELOS: [string, string, "CABALLERO" | "DAMA" | "NINO", number, string[], string][] = [
+  // sku, nombre, género, precio por par, colores, descripción
+  ["CV-URB-01", "Urbana Clásica", "CABALLERO", 89, ["Marrón", "Negro"], "Zapatilla urbana de cuero liso con plantilla acolchada."],
+  ["CV-URB-02", "Urbana Street", "CABALLERO", 95, ["Negro", "Blanco"], "Diseño urbano con suela de caucho vulcanizado."],
+  ["CV-URB-03", "Urbana Premium", "CABALLERO", 118, ["Hueso", "Marrón"], "Cuero napa seleccionado, costuras reforzadas."],
+  ["CV-CAS-01", "Casual Nobuk", "CABALLERO", 99, ["Camel", "Gris"], "Cuero nobuk, ideal para oficina y fin de semana."],
+  ["CV-CAS-02", "Casual Sport", "CABALLERO", 92, ["Gris", "Negro"], "Casual deportiva, liviana y flexible."],
+  ["CV-CAS-03", "Casual Oxford", "CABALLERO", 125, ["Vino", "Negro"], "Estilo oxford con cordones encerados."],
+  ["CV-DEP-01", "Deportiva Runner", "CABALLERO", 105, ["Blanco", "Azul"], "Cuero perforado para mayor ventilación."],
+  ["CV-DEP-02", "Deportiva Pro", "CABALLERO", 112, ["Azul", "Negro"], "Suela de alta tracción, empeine acolchado."],
+  ["CV-DEP-03", "Deportiva Trail", "CABALLERO", 129, ["Verde", "Marrón"], "Para caminata ligera y uso rudo."],
+  ["CV-DAM-01", "Dama Sneaker", "DAMA", 85, ["Fucsia", "Blanco"], "Sneaker femenina de cuero con plataforma."],
+  ["CV-DAM-02", "Dama Casual", "DAMA", 88, ["Beige", "Negro"], "Casual femenina, horma cómoda."],
+  ["CV-DAM-03", "Dama Urbana", "DAMA", 94, ["Negro", "Blanco"], "Urbana con detalles metálicos."],
+  ["CV-NIN-01", "Escolar Niño", "NINO", 65, ["Negro", "Rojo"], "Escolar resistente de cuero, puntera reforzada."],
+  ["CV-NIN-02", "Sport Kids", "NINO", 69, ["Turquesa", "Blanco"], "Deportiva infantil con velcro."],
+  ["CV-BOT-01", "Botín Cuero", "CABALLERO", 139, ["Marrón", "Negro"], "Botín de cuero engrasado con forro textil."],
+];
+
+async function seedCatalogo() {
+  if ((await db.modelo.count()) > 0) return;
+  const curvas: Record<string, string> = {};
+  for (const c of CURVAS) {
+    const pares = Object.values(c.distribucion).reduce((a, b) => a + b, 0);
+    const creada = await db.curvaTallas.upsert({
+      where: { nombre: c.nombre },
+      update: {},
+      create: { nombre: c.nombre, genero: c.genero, distribucion: c.distribucion, paresPorSerie: pares },
+    });
+    curvas[c.genero] = creada.id;
+  }
+  const colores: Record<string, string> = {};
+  for (const [nombre, hex] of Object.entries(COLORES)) {
+    colores[nombre] = (await db.color.upsert({ where: { nombre }, update: {}, create: { nombre, hex } })).id;
+  }
+  for (const [sku, nombre, genero, precio, cols, descripcion] of MODELOS) {
+    const curva = CURVAS.find((c) => c.genero === genero)!;
+    const modelo = await db.modelo.create({
+      data: {
+        sku, nombre, genero, descripcion,
+        precioBase: precio,
+        costo: Math.round(precio * 0.58),
+        curvaId: curvas[genero]!,
+        fotos: [`/catalogo/${sku.toLowerCase()}.svg`],
+      },
+    });
+    for (const color of cols) {
+      const series = entre(4, 30);
+      await db.variante.createMany({
+        data: Object.entries(curva.distribucion).map(([talla, pares]) => ({
+          modeloId: modelo.id, colorId: colores[color]!, talla: Number(talla),
+          // Algunas tallas quedan cortas para que se vean alertas de stock
+          stock: pares * series + (azar() < 0.1 ? -pares * Math.min(series, entre(2, 6)) : entre(0, 4)),
+        })),
+      });
+    }
+  }
+}
+
+async function seedPrecios() {
+  if ((await db.listaPrecio.count()) > 0) return;
+  const tiendas = await db.listaPrecio.create({ data: { nombre: "Tiendas", tipoCliente: "TIENDA", ajustePorcentaje: 0 } });
+  const reventa = await db.listaPrecio.create({ data: { nombre: "Revendedores", tipoCliente: "REVENDEDOR", ajustePorcentaje: -5 } });
+  const distrib = await db.listaPrecio.create({ data: { nombre: "Distribuidores", tipoCliente: "DISTRIBUIDOR", ajustePorcentaje: -10 } });
+  void tiendas;
+  void reventa;
+  await db.escalaPrecio.createMany({
+    data: [
+      { listaId: null, desdeSeries: 5, descuentoPorcentaje: 3 },
+      { listaId: null, desdeSeries: 10, descuentoPorcentaje: 5 },
+      { listaId: null, desdeSeries: 20, descuentoPorcentaje: 8 },
+      { listaId: distrib.id, desdeSeries: 20, descuentoPorcentaje: 4 },
+      { listaId: distrib.id, desdeSeries: 40, descuentoPorcentaje: 6 },
+    ],
+  });
+  const botin = await db.modelo.findUnique({ where: { sku: "CV-BOT-01" } });
+  if (botin) await db.precioLista.create({ data: { listaId: distrib.id, modeloId: botin.id, precio: 119 } });
+}
+
+// ─────────────────────────── Pedidos (13 meses) ───────────────────────────
+type Perfil = "PROSPECTO" | "ACTIVO" | "NUEVO" | "EN_RIESGO" | "INACTIVO";
+
+async function datosPrecios() {
+  const [modelos, listas, escalas] = await Promise.all([
+    db.modelo.findMany({ include: { curva: true, variantes: { select: { colorId: true } } } }),
+    db.listaPrecio.findMany({ include: { precios: true } }),
+    db.escalaPrecio.findMany(),
+  ]);
+  return { modelos, listas, escalas };
+}
+
+function lineasAleatorias(modelos: Awaited<ReturnType<typeof datosPrecios>>["modelos"], tipo: string) {
+  const n = entre(1, tipo === "DISTRIBUIDOR" ? 5 : 3);
+  const elegidos = new Map<string, { modeloId: string; colorId: string; series: number }>();
+  for (let i = 0; i < n; i++) {
+    const m = elegir(modelos);
+    const colorId = elegir([...new Set(m.variantes.map((v) => v.colorId))]);
+    const series = tipo === "DISTRIBUIDOR" ? entre(3, 10) : entre(1, 4);
+    elegidos.set(`${m.id}|${colorId}`, { modeloId: m.id, colorId, series });
+  }
+  return [...elegidos.values()];
+}
+
+function totalesPara(d: Awaited<ReturnType<typeof datosPrecios>>, tipo: string, lineas: { modeloId: string; colorId: string; series: number }[], descuento = 0) {
+  const lista = d.listas.find((l) => l.tipoCliente === tipo) ?? null;
+  const escLista = lista ? d.escalas.filter((e) => e.listaId === lista.id) : [];
+  const escalas = (escLista.length ? escLista : d.escalas.filter((e) => e.listaId === null)).map((e) => ({
+    desdeSeries: e.desdeSeries, descuentoPorcentaje: Number(e.descuentoPorcentaje),
+  }));
+  return calcularTotales({
+    lineas: lineas.map((l) => {
+      const m = d.modelos.find((x) => x.id === l.modeloId)!;
+      const pl = lista?.precios.find((p) => p.modeloId === m.id);
+      return { ...l, paresPorSerie: m.curva.paresPorSerie, precioBase: Number(m.precioBase), precioLista: pl ? Number(pl.precio) : null };
+    }),
+    ajusteLista: lista ? Number(lista.ajustePorcentaje) : 0,
+    escalas,
+    descuentoManual: descuento,
+    igvPorcentaje: 18,
+  });
+}
+
+async function seedPedidos() {
+  if ((await db.pedido.count()) > 0) return;
+  const d = await datosPrecios();
+  const admin = await db.user.findUniqueOrThrow({ where: { email: "gerente@convert.pe" } });
+  const clientes = await db.cliente.findMany({ where: { vendedorId: { not: null } }, orderBy: { ruc: "asc" } });
+  const ahora = Date.now();
+  const inicioHistoria = ahora - 400 * DIA; // ~13 meses
+  const perfiles: Perfil[] = [
+    "ACTIVO", "ACTIVO", "EN_RIESGO", "ACTIVO", "NUEVO", "ACTIVO", "INACTIVO", "ACTIVO", "EN_RIESGO", "ACTIVO",
+    "ACTIVO", "PROSPECTO", "ACTIVO", "EN_RIESGO", "NUEVO", "ACTIVO", "INACTIVO", "ACTIVO", "ACTIVO", "EN_RIESGO",
+    "ACTIVO", "NUEVO", "ACTIVO", "PROSPECTO", "ACTIVO", "INACTIVO", "ACTIVO", "EN_RIESGO", "PROSPECTO", "ACTIVO",
+  ];
+
+  for (const [i, c] of clientes.entries()) {
+    const perfil = perfiles[i % perfiles.length]!;
+    if (perfil === "PROSPECTO") continue;
+    const frecuencia = c.tipo === "DISTRIBUIDOR" ? entre(20, 35) : entre(25, 55);
+    let fecha: number;
+    let fin: number;
+    switch (perfil) {
+      case "NUEVO": fecha = ahora - entre(30, 80) * DIA; fin = ahora - entre(0, 10) * DIA; break;
+      case "EN_RIESGO": fecha = inicioHistoria + entre(0, 40) * DIA; fin = ahora - Math.round(frecuencia * 1.8) * DIA; break;
+      case "INACTIVO": fecha = inicioHistoria + entre(0, 30) * DIA; fin = ahora - entre(190, 240) * DIA; break;
+      default: fecha = inicioHistoria + entre(0, 30) * DIA; fin = ahora - entre(0, 15) * DIA;
+    }
+    let primero = true;
+    while (fecha <= fin) {
+      const f = new Date(fecha + entre(9, 18) * 3_600_000);
+      await crearPedidoHistorico(d, c, f, primero, admin.id);
+      primero = false;
+      fecha += Math.max(7, frecuencia + entre(-7, 7)) * DIA;
+    }
+  }
+
+  // Pedidos de los últimos días en distintos estados, para probar el flujo completo
+  const activos = clientes.filter((_, i) => perfiles[i % perfiles.length] === "ACTIVO");
+  const recientes: EstadoSeed[] = ["PENDIENTE_PAGO", "PENDIENTE_PAGO", "PENDIENTE_PAGO", "PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO"];
+  for (const [i, estado] of recientes.entries()) {
+    const c = activos[(i * 3) % activos.length]!;
+    await crearPedidoHistorico(d, c, new Date(ahora - entre(0, 4) * DIA - entre(1, 8) * 3_600_000), false, admin.id, estado);
+  }
+}
+
+type EstadoSeed = "PENDIENTE_PAGO" | "PAGO_VERIFICADO" | "EN_PREPARACION" | "ENVIADO" | "ENTREGADO" | "CANCELADO";
+
+async function crearPedidoHistorico(
+  d: Awaited<ReturnType<typeof datosPrecios>>,
+  c: { id: string; tipo: string; vendedorId: string | null; direccion: string | null; ciudad: string },
+  fecha: Date,
+  primero: boolean,
+  adminId: string,
+  estadoForzado?: EstadoSeed,
+) {
+  const lineas = lineasAleatorias(d.modelos, c.tipo);
+  const t = totalesPara(d, c.tipo, lineas, azar() < 0.15 ? elegir([2, 3, 5]) : 0);
+  const dias = (Date.now() - fecha.getTime()) / DIA;
+  const estado: EstadoSeed = estadoForzado ??
+    (dias > 12 ? (azar() < 0.05 ? "CANCELADO" : "ENTREGADO")
+      : dias > 6 ? elegir(["ENVIADO", "ENTREGADO"] as const)
+        : dias > 3 ? elegir(["PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO"] as const)
+          : elegir(["PENDIENTE_PAGO", "PENDIENTE_PAGO", "PAGO_VERIFICADO"] as const));
+  const pagado = estado !== "PENDIENTE_PAGO" && estado !== "CANCELADO";
+  const enviado = estado === "ENVIADO" || estado === "ENTREGADO";
+  const agencia = c.ciudad === "Lima" ? "Recojo en almacén" : elegir(["Shalom", "Olva Courier", "Marvisur", "Cruz del Sur Cargo"]);
+  const fPago = new Date(fecha.getTime() + entre(2, 30) * 3_600_000);
+
+  await db.pedido.create({
+    data: {
+      clienteId: c.id,
+      vendedorId: c.vendedorId!,
+      fecha,
+      estado,
+      subtotal: t.subtotal,
+      descuentoMonto: t.descuentoVolumen + t.descuentoManualMonto,
+      baseImponible: t.baseImponible,
+      igv: t.igv,
+      total: t.total,
+      totalSeries: t.totalSeries,
+      totalPares: t.totalPares,
+      direccionEnvio: [c.direccion, c.ciudad].filter(Boolean).join(", "),
+      agenciaEnvio: enviado ? agencia : null,
+      numeroGuia: enviado && agencia !== "Recojo en almacén" ? `${agencia.slice(0, 3).toUpperCase()}-${entre(100000, 999999)}` : null,
+      fechaEnvio: enviado ? new Date(fecha.getTime() + 2 * DIA) : null,
+      fechaEntrega: estado === "ENTREGADO" ? new Date(fecha.getTime() + entre(3, 6) * DIA) : null,
+      comprobante: pagado ? `F001-${String(entre(1000, 99999)).padStart(6, "0")}` : null,
+      esPrimerPedido: primero,
+      motivoCancelacion: estado === "CANCELADO" ? "Cliente desistió del pedido" : null,
+      createdAt: fecha,
+      items: {
+        create: t.lineas.map((l) => ({
+          modeloId: l.modeloId, colorId: l.colorId, series: l.series, pares: l.pares, precioPar: l.precioPar, subtotal: l.subtotal,
+        })),
+      },
+      pagos: pagado
+        ? { create: { monto: t.total, metodo: elegir(["TRANSFERENCIA", "DEPOSITO", "YAPE", "PLIN"] as const), referencia: String(entre(1000000, 9999999)), fecha: fPago, verificado: true, verificadoPorId: adminId, verificadoAt: fPago } }
+        : undefined,
+      historial: {
+        create: [
+          { estadoNuevo: "PENDIENTE_PAGO", usuarioId: c.vendedorId!, createdAt: fecha },
+          ...(estado !== "PENDIENTE_PAGO" ? [{ estadoAnterior: "PENDIENTE_PAGO" as const, estadoNuevo: estado, usuarioId: adminId, createdAt: fPago }] : []),
+        ],
+      },
+    },
+  });
+}
+
+async function seedCotizaciones() {
+  if ((await db.cotizacion.count()) > 0) return;
+  const d = await datosPrecios();
+  const clientes = await db.cliente.findMany({ where: { vendedorId: { not: null } }, take: 12, orderBy: { razonSocial: "asc" } });
+  const estados = ["BORRADOR", "ENVIADA", "ENVIADA", "ACEPTADA", "RECHAZADA", "PENDIENTE_APROBACION"] as const;
+  for (const [i, c] of clientes.entries()) {
+    const estado = estados[i % estados.length]!;
+    const lineas = lineasAleatorias(d.modelos, c.tipo);
+    const descuento = estado === "PENDIENTE_APROBACION" ? elegir([7, 8, 12]) : azar() < 0.3 ? 3 : 0;
+    const t = totalesPara(d, c.tipo, lineas, descuento);
+    const creada = new Date(Date.now() - entre(0, 12) * DIA);
+    const op = await db.oportunidad.findFirst({ where: { clienteId: c.id, etapa: { notIn: ["GANADO", "PERDIDO"] } } });
+    await db.cotizacion.create({
+      data: {
+        clienteId: c.id, vendedorId: c.vendedorId!, oportunidadId: op?.id, estado,
+        validaHasta: new Date(creada.getTime() + 7 * DIA),
+        subtotal: t.subtotal, descuentoVolumen: t.descuentoVolumen, descuentoPorcentaje: descuento, descuentoMonto: t.descuentoManualMonto,
+        baseImponible: t.baseImponible, igv: t.igv, total: t.total, createdAt: creada,
+        items: { create: t.lineas.map((l) => ({ modeloId: l.modeloId, colorId: l.colorId, series: l.series, pares: l.pares, precioPar: l.precioPar, subtotal: l.subtotal })) },
+        aprobaciones: estado === "PENDIENTE_APROBACION" ? { create: { solicitanteId: c.vendedorId!, descuentoSolicitado: descuento } } : undefined,
+      },
+    });
+  }
+}
+
+/** Mismo cálculo que server/metricas-cliente.ts, con las reglas por defecto. */
+async function recalcularClientes() {
+  const cfg = await db.configuracion.findUniqueOrThrow({ where: { id: 1 } });
+  const reglas = {
+    diasClienteNuevo: cfg.diasClienteNuevo, factorEnRiesgo: Number(cfg.factorEnRiesgo),
+    diasClienteInactivo: cfg.diasClienteInactivo, frecuenciaDefectoDias: cfg.frecuenciaDefectoDias,
+  };
+  const ahora = new Date();
+  const hace12m = new Date(ahora.getTime() - 365 * DIA);
+  for (const c of await db.cliente.findMany()) {
+    const pedidos = await db.pedido.findMany({
+      where: { clienteId: c.id, estado: { in: ["PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO", "ENTREGADO"] } },
+      select: { fecha: true, baseImponible: true },
+      orderBy: { fecha: "asc" },
+    });
+    const fechas = pedidos.map((p) => p.fecha);
+    const primeraCompra = fechas[0] ?? null;
+    const ultimaCompra = fechas.at(-1) ?? null;
+    const frecuenciaDias = calcularFrecuenciaDias(fechas);
+    const total = pedidos.reduce((s, p) => s + Number(p.baseImponible), 0);
+    const total12m = pedidos.filter((p) => p.fecha >= hace12m).reduce((s, p) => s + Number(p.baseImponible), 0);
+    await db.cliente.update({
+      where: { id: c.id },
+      data: {
+        primeraCompra, ultimaCompra, frecuenciaDias,
+        numeroPedidos: pedidos.length,
+        ticketPromedio: pedidos.length ? Math.round((total / pedidos.length) * 100) / 100 : null,
+        totalComprado12m: Math.round(total12m * 100) / 100,
+        estado: calcularEstadoCliente({ primeraCompra, ultimaCompra, frecuenciaDias }, reglas, ahora),
+        categoria: c.categoriaManual ? c.categoria : calcularCategoria(total12m, Number(cfg.umbralCategoriaA), Number(cfg.umbralCategoriaB)),
       },
     });
   }

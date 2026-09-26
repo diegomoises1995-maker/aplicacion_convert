@@ -1,6 +1,6 @@
 "use server";
 
-import { AuthError } from "next-auth";
+import { AuthError, CredentialsSignin } from "next-auth";
 import { signIn, signOut } from "@/auth";
 
 export type EstadoLogin = { error?: string } | undefined;
@@ -24,6 +24,9 @@ export async function iniciarSesion(_prev: EstadoLogin, formData: FormData): Pro
       redirectTo: destinoSeguro(formData.get("callbackUrl")),
     });
   } catch (error) {
+    if (error instanceof CredentialsSignin && error.code === "bloqueado") {
+      return { error: "Demasiados intentos fallidos. Espera 15 minutos o pide a tu gerente que restablezca tu contraseña." };
+    }
     if (error instanceof AuthError) {
       return { error: "Correo o contraseña incorrectos, o el usuario está inactivo." };
     }

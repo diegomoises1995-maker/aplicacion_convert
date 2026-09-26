@@ -4,9 +4,9 @@ import { PrismaClient, type Rol, type CanalVenta } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { completarRuc } from "../src/lib/ruc";
 import { calcularTotales } from "../src/lib/precios";
-import { calcularCategoria, calcularEstadoCliente, calcularFrecuenciaDias } from "../src/lib/clientes";
 import { calcularComision, sinIgv } from "../src/lib/comisiones";
 import { partesLima, rangoMes, sumarMeses } from "../src/lib/fechas";
+import { ejecutarTareasDiarias } from "../src/server/tareas-diarias";
 
 const db = new PrismaClient();
 const PASSWORD_DEMO = process.env.SEED_PASSWORD ?? "Convert2026";
@@ -64,8 +64,10 @@ async function main() {
   await seedPrecios();
   await seedPedidos();
   await seedCotizaciones();
-  await recalcularClientes();
   await seedMetasYComisiones();
+  // Mismo proceso que corre cada día: métricas, estados, categorías y alertas de recompra
+  const r = await ejecutarTareasDiarias(db);
+  console.log(`Proceso diario: ${r.alertasNuevas} alertas de recompra generadas.`);
 
   const plantillas = [
     {
@@ -558,41 +560,6 @@ async function seedMetasYComisiones() {
     }
     await db.meta.create({ data: { tipo: "SOLES", periodo: "MENSUAL", anio, mes, equipoSupervisorId: supervisor.id, valor: totalEquipo } });
     await db.meta.create({ data: { tipo: "SOLES", periodo: "MENSUAL", anio, mes, valor: totalEquipo } });
-  }
-}
-
-/** Mismo cálculo que server/metricas-cliente.ts, con las reglas por defecto. */
-async function recalcularClientes() {
-  const cfg = await db.configuracion.findUniqueOrThrow({ where: { id: 1 } });
-  const reglas = {
-    diasClienteNuevo: cfg.diasClienteNuevo, factorEnRiesgo: Number(cfg.factorEnRiesgo),
-    diasClienteInactivo: cfg.diasClienteInactivo, frecuenciaDefectoDias: cfg.frecuenciaDefectoDias,
-  };
-  const ahora = new Date();
-  const hace12m = new Date(ahora.getTime() - 365 * DIA);
-  for (const c of await db.cliente.findMany()) {
-    const pedidos = await db.pedido.findMany({
-      where: { clienteId: c.id, estado: { in: ["PAGO_VERIFICADO", "EN_PREPARACION", "ENVIADO", "ENTREGADO"] } },
-      select: { fecha: true, baseImponible: true },
-      orderBy: { fecha: "asc" },
-    });
-    const fechas = pedidos.map((p) => p.fecha);
-    const primeraCompra = fechas[0] ?? null;
-    const ultimaCompra = fechas.at(-1) ?? null;
-    const frecuenciaDias = calcularFrecuenciaDias(fechas);
-    const total = pedidos.reduce((s, p) => s + Number(p.baseImponible), 0);
-    const total12m = pedidos.filter((p) => p.fecha >= hace12m).reduce((s, p) => s + Number(p.baseImponible), 0);
-    await db.cliente.update({
-      where: { id: c.id },
-      data: {
-        primeraCompra, ultimaCompra, frecuenciaDias,
-        numeroPedidos: pedidos.length,
-        ticketPromedio: pedidos.length ? Math.round((total / pedidos.length) * 100) / 100 : null,
-        totalComprado12m: Math.round(total12m * 100) / 100,
-        estado: calcularEstadoCliente({ primeraCompra, ultimaCompra, frecuenciaDias }, reglas, ahora),
-        categoria: c.categoriaManual ? c.categoria : calcularCategoria(total12m, Number(cfg.umbralCategoriaA), Number(cfg.umbralCategoriaB)),
-      },
-    });
   }
 }
 

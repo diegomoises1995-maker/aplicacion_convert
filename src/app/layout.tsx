@@ -5,6 +5,8 @@ export const metadata: Metadata = {
   title: { default: "Convert Ventas", template: "%s · Convert Ventas" },
   description: "Gestión del equipo de ventas de Convert – zapatillas de cuero al por mayor",
   applicationName: "Convert Ventas",
+  appleWebApp: { capable: true, title: "Convert", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {

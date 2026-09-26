@@ -23,9 +23,10 @@ export async function DashboardVendedor({ usuario }: { usuario: UsuarioActual })
     metasDelPeriodo({ periodo: "MENSUAL", anio, mes }),
     calcularComisionMes(usuario.id, anio, mes),
     listarActividades({ vendedorId: usuario.id, completada: false, fechaProgramada: { lt: hoy.fin } }),
-    db.cliente.findMany({
-      where: { vendedorId: usuario.id, estado: { in: ["EN_RIESGO"] } },
-      orderBy: { ticketPromedio: { sort: "desc", nulls: "last" } },
+    db.alertaRecompra.findMany({
+      where: { vendedorId: usuario.id, atendida: false },
+      include: { cliente: true },
+      orderBy: { diasSinCompra: "desc" },
       take: 5,
     }),
     ventasMensuales({ tipo: "vendedores", ids: [usuario.id] }, anio, mes),
@@ -89,14 +90,16 @@ export async function DashboardVendedor({ usuario }: { usuario: UsuarioActual })
         <Card>
           <div className="mb-2 flex items-center justify-between">
             <CardTitulo>Clientes por recomprar</CardTitulo>
-            <Link href="/clientes?estado=EN_RIESGO" className="inline-flex items-center gap-1 text-sm text-marca-700">Ver <ArrowRight className="size-3.5" /></Link>
+            <Link href="/agenda" className="inline-flex items-center gap-1 text-sm text-marca-700">Ver <ArrowRight className="size-3.5" /></Link>
           </div>
           <ul className="divide-y divide-borde text-sm">
-            {porRecomprar.map((c) => (
-              <li key={c.id}>
-                <Link href={`/clientes/${c.id}`} className="block py-2">
-                  <span className="font-medium">{c.nombreComercial || c.razonSocial}</span>
-                  <span className="block text-xs text-texto-suave">Última compra {formatFecha(c.ultimaCompra)} · suele comprar cada {c.frecuenciaDias ?? "—"} días</span>
+            {porRecomprar.map((a) => (
+              <li key={a.id}>
+                <Link href={`/clientes/${a.clienteId}`} className="block py-2">
+                  <span className="font-medium">{a.cliente.nombreComercial || a.cliente.razonSocial}</span>
+                  <span className="block text-xs text-texto-suave">
+                    {a.diasSinCompra} días sin comprar · suele comprar cada {a.frecuenciaDias} días · última {formatFecha(a.cliente.ultimaCompra)}
+                  </span>
                 </Link>
               </li>
             ))}

@@ -29,7 +29,7 @@ const cotizacionSchema = z.object({
 
 export type EntradaCotizacion = z.infer<typeof cotizacionSchema>;
 
-export async function crearCotizacion(entrada: EntradaCotizacion): Promise<{ error?: string } | never> {
+export async function crearCotizacion(entrada: EntradaCotizacion): Promise<{ error?: string; id?: string }> {
   const usuario = await requireUsuario();
   const parsed = cotizacionSchema.safeParse(entrada);
   if (!parsed.success) return { error: parsed.error.issues[0]!.message };
@@ -117,7 +117,9 @@ export async function crearCotizacion(entrada: EntradaCotizacion): Promise<{ err
   });
 
   revalidatePath("/cotizaciones");
-  redirect(`/cotizaciones/${cot.id}`);
+  // La navegación la hace el cliente: un redirect aquí puede perderse si coincide
+  // con otra navegación en curso del router.
+  return { id: cot.id };
 }
 
 async function cotizacionVisible(id: string) {

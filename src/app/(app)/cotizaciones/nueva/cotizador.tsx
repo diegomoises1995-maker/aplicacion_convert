@@ -89,7 +89,8 @@ export function Cotizador({
       const r = await crearCotizacion({
         clienteId, oportunidadId: oportunidad || null, lineas, descuentoManual: descuento, validezDias: validez, notas: notas || null,
       });
-      if (r?.error) setError(r.error);
+      if (r.error) setError(r.error);
+      else if (r.id) router.push(`/cotizaciones/${r.id}`);
     });
   }
 

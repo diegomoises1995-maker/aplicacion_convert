@@ -22,6 +22,7 @@ const ITEMS: ItemNav[] = [
   { href: "/catalogo", titulo: "Catálogo", icono: "catalogo" },
   { href: "/metas", titulo: "Metas", icono: "metas" },
   { href: "/comisiones", titulo: "Comisiones", icono: "comisiones" },
+  { href: "/reportes", titulo: "Reportes", icono: "reportes", permiso: "reportes.gerencia" },
   { href: "/aprobaciones", titulo: "Aprobaciones", icono: "aprobaciones", permiso: "descuentos.aprobar" },
   { href: "/equipo", titulo: "Equipo", icono: "equipo", permiso: "equipo.ver" },
   { href: "/configuracion", titulo: "Configuración", icono: "configuracion", permiso: "configuracion.editar" },

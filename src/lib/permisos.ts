@@ -72,6 +72,7 @@ const RUTAS_PROTEGIDAS: { prefijo: string; permiso: Permiso }[] = [
   { prefijo: "/catalogo/nuevo", permiso: "catalogo.gestionar" },
   { prefijo: "/aprobaciones", permiso: "descuentos.aprobar" },
   { prefijo: "/metas/definir", permiso: "metas.definir" },
+  { prefijo: "/reportes", permiso: "reportes.gerencia" },
   { prefijo: "/configuracion", permiso: "configuracion.editar" },
   { prefijo: "/auditoria", permiso: "auditoria.ver" },
 ];
